@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>WPT 偏心圆环线圈互感可视化</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0e1116; color: #e6e6e6; }
+  #app { display: flex; height: 100vh; width: 100vw; }
+
+  /* 左侧 3D 视区分成左右两个等宽子视区 */
+  #viewer { flex: 1; display: flex; min-width: 0; background: #0b0d12; }
+  #viewer-left, #viewer-right { flex: 1; position: relative; min-width: 0; min-height: 0; }
+  #viewer-right { border-left: 1px solid #2a2f3a; background: #0d1018; }
+  #viewer canvas { display: block; width: 100% !important; height: 100% !important; }
+
+  #legend { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+  #legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #status { position: absolute; bottom: 12px; left: 12px; font-size: 12px; color: #9aa3b2; background: rgba(20,22,28,0.65); padding: 4px 10px; border-radius: 4px; }
+  #plot-title { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 6px 12px; border-radius: 6px; font-size: 13px; color: #cbd3df; }
+  #plot-hint  { position: absolute; bottom: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 4px 10px; border-radius: 4px; font-size: 12px; color: #8892a0; }
+
+  #panel { width: 300px; padding: 20px; background: #161a22; border-left: 1px solid #2a2f3a; overflow-y: auto; flex-shrink: 0; }
+  #panel h1 { font-size: 17px; margin: 0 0 16px; color: #fff; font-weight: 600; }
+  .control { margin-bottom: 18px; }
+  .control .row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .control label { font-size: 14px; color: #b8c0cc; }
+  .control .value { font-family: "SF Mono", Menlo, monospace; font-size: 15px; color: #6ec1ff; }
+  .control input[type=range] { width: 100%; -webkit-appearance: none; height: 4px; background: #2a2f3a; border-radius: 2px; outline: none; }
+  .control input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #6ec1ff; cursor: pointer; border: 2px solid #161a22; }
+  .control input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #6ec1ff; cursor: pointer; border: 2px solid #161a22; }
+  .result { margin-top: 28px; padding: 16px; background: #11141b; border-radius: 8px; border: 1px solid #2a2f3a; }
+  .result h2 { margin: 0 0 12px; font-size: 14px; color: #b8c0cc; font-weight: 500; }
+  .result .metric { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; }
+  .result .metric .k { color: #8892a0; }
+  .result .metric .v { font-family: "SF Mono", Menlo, monospace; color: #fff; }
+  .result .eff { font-size: 28px; color: #6ec1ff; font-weight: 600; text-align: center; margin: 14px 0 4px; font-family: "SF Mono", Menlo, monospace; }
+  .result .eff-bar { height: 6px; background: #2a2f3a; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .result .eff-bar > div { height: 100%; background: linear-gradient(90deg,#3b82f6,#22d3ee); width: 0%; transition: width 0.12s ease-out; }
+  .note { margin-top: 18px; font-size: 11px; color: #6b7280; line-height: 1.55; }
+  #goto-metal { position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    background: #2a3142; color: #e6e6e6; padding: 10px 16px; border-radius: 6px;
+    text-decoration: none; font-size: 13px; border: 1px solid #3a4252;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35); transition: background 0.15s; }
+  #goto-metal:hover { background: #3a4252; }
+</style>
+</head>
+<body>
+<a id="goto-metal" href="metal.html">金属壳影响仿真 →</a>
+<div id="app">
+  <div id="viewer">
+    <!-- 左半：原偏心圆环 3D 模型 -->
+    <div id="viewer-left">
+      <div id="legend">
+        <div><span class="dot" style="background:#ee3333"></span>发射线圈 (TX)</div>
+        <div><span class="dot" style="background:#3b82f6"></span>接收线圈 (RX)</div>
+      </div>
+      <div id="status">加载中…</div>
+    </div>
+    <!-- 右半：充电效率 η(x₀, d) 曲面 -->
+    <div id="viewer-right">
+      <div id="plot-title">充电效率 η(x₀, d) 曲面</div>
+      <div id="plot-hint">鼠标拖动旋转 · 滚轮缩放</div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>WPT 偏心圆环线圈仿真</h1>
+
+    <div class="control">
+      <div class="row"><label>偏心距 x₀</label><span class="value"><span id="x0_val">0.0</span> mm</span></div>
+      <input type="range" id="x0_slider" min="0" max="40" step="0.1" value="0" />
+    </div>
+
+    <div class="control">
+      <div class="row"><label>轴向距离 d</label><span class="value"><span id="d_val">10.0</span> mm</span></div>
+      <input type="range" id="d_slider" min="1" max="30" step="0.1" value="10" />
+    </div>
+
+    <div class="result">
+      <h2>实时结果</h2>
+      <div class="metric"><span class="k">互感 M</span><span class="v" id="m_val">—</span></div>
+      <div class="metric"><span class="k">耦合系数 (相对)</span><span class="v" id="k_val">—</span></div>
+      <div class="eff" id="eff_val">— %</div>
+      <div class="eff-bar"><div id="eff_bar"></div></div>
+      <div style="text-align:center; font-size:12px; color:#8892a0; margin-top:6px;">充电效率</div>
+    </div>
+
+    <div class="note">
+      数据来源: <code>simulation_data.json</code><br />
+      效率模型: η = (M / M<sub>max</sub>)² × η<sub>peak</sub><br />
+      η<sub>peak</sub> 设为 95% (理想谐振匹配下的近上限)。
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- DOM ----------
+const viewerLeftEl  = document.getElementById('viewer-left');
+const viewerRightEl = document.getElementById('viewer-right');
+const x0Slider = document.getElementById('x0_slider');
+const dSlider  = document.getElementById('d_slider');
+const x0ValEl  = document.getElementById('x0_val');
+const dValEl   = document.getElementById('d_val');
+const mValEl   = document.getElementById('m_val');
+const kValEl   = document.getElementById('k_val');
+const effEl    = document.getElementById('eff_val');
+const effBar   = document.getElementById('eff_bar');
+const statusEl = document.getElementById('status');
+
+// ---------- 物理参数 (与 solver.cpp 一致) ----------
+const R_TX = 50;
+const R_RX = 50;
+const TUBE = 1.6;
+const ETA_PEAK = 0.95;
+
+// ============================================================
+//  场景 1 — 左半：偏心圆环 3D 模型 (保持原效果)
+// ============================================================
+const scene1 = new THREE.Scene();
+scene1.background = new THREE.Color(0x0b0d12);
+
+const camera1 = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+// 相机沿 target 方向后撤 1.25× —— 整体模型同比例缩到 80%
+camera1.position.set(129.25, 98.25, 181.25);
+
+const renderer1 = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer1.setPixelRatio(window.devicePixelRatio);
+renderer1.outputColorSpace = THREE.SRGBColorSpace;
+viewerLeftEl.appendChild(renderer1.domElement);
+
+const controls1 = new OrbitControls(camera1, renderer1.domElement);
+// 目标点：覆盖 TX(0,0,0) 到 RX 工作区中点的中间
+controls1.target.set(8, 7, 0);
+controls1.enableDamping = true;
+controls1.dampingFactor = 0.08;
+controls1.minDistance = 40;
+controls1.maxDistance = 500;
+
+scene1.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirL1 = new THREE.DirectionalLight(0xffffff, 0.75);
+dirL1.position.set(120, 200, 120); scene1.add(dirL1);
+const dirL2 = new THREE.DirectionalLight(0x88aaff, 0.25);
+dirL2.position.set(-100, -50, -120); scene1.add(dirL2);
+
+const grid1 = new THREE.GridHelper(240, 24, 0x2a2f3a, 0x1a1d24);
+grid1.position.y = -2; scene1.add(grid1);
+scene1.add(new THREE.AxesHelper(70));
+
+// ---- 两个圆环 ----
+function makeCoil(radius, color) {
+  const geom = new THREE.TorusGeometry(radius, TUBE, 20, 128);
+  const mat = new THREE.MeshStandardMaterial({
+    color, metalness: 0.7, roughness: 0.25,
+    emissive: color, emissiveIntensity: 0.15,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.rotation.x = Math.PI / 2;
+  return mesh;
+}
+const tx = makeCoil(R_TX, 0xee3333);   scene1.add(tx);
+const rx = makeCoil(R_RX, 0x3b82f6);   scene1.add(rx);
+
+// 中心连线
+const linkMat = new THREE.LineDashedMaterial({ color: 0x6ec1ff, dashSize: 3, gapSize: 2, opacity: 0.7, transparent: true });
+let linkGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,10,0)]);
+const link = new THREE.Line(linkGeom, linkMat);
+link.computeLineDistances(); scene1.add(link);
+
+// ---- 磁力线 (贝塞尔) + 流动粒子 ----
+const NUM_LINES = 20, PARTICLES_PER_LINE = 4, SAMPLES_PER_CURVE = 60;
+const fieldLineMat = new THREE.LineBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.55 });
+
+function makeGlowTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32,32,0, 32,32,32);
+  grd.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+  grd.addColorStop(0.3, 'rgba(255,255,255,0.55)');
+  grd.addColorStop(1.0, 'rgba(255,255,255,0.0)');
+  g.fillStyle = grd; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const glowTex = makeGlowTexture();
+const particleMat = new THREE.SpriteMaterial({
+  map: glowTex, color: 0x00ff66,
+  blending: THREE.AdditiveBlending, transparent: true, depthWrite: false,
+});
+
+const fieldLines = [];
+const particles  = [];
+
+function buildFieldLines(x0, d) {
+  for (const fl of fieldLines) { fl.line.geometry.dispose(); scene1.remove(fl.line); }
+  fieldLines.length = 0;
+  for (let i = 0; i < NUM_LINES; i++) {
+    const theta = (i / NUM_LINES) * Math.PI * 2;
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+    const start = new THREE.Vector3(R_TX * cosT,      0, R_TX * sinT);
+    const end   = new THREE.Vector3(x0 + R_RX * cosT, d, R_RX * sinT);
+    const outward = new THREE.Vector3(cosT, 0, sinT);
+    const bulge = 18 + 0.45 * d;
+    const cp1 = start.clone().add(new THREE.Vector3(0,  d * 0.40, 0)).addScaledVector(outward, bulge);
+    const cp2 = end.clone()  .add(new THREE.Vector3(0, -d * 0.40, 0)).addScaledVector(outward, bulge);
+    const curve = new THREE.CubicBezierCurve3(start, cp1, cp2, end);
+    const geom = new THREE.BufferGeometry().setFromPoints(curve.getPoints(SAMPLES_PER_CURVE));
+    const line = new THREE.Line(geom, fieldLineMat);
+    scene1.add(line);
+    fieldLines.push({ curve, line });
+  }
+}
+function buildParticles() {
+  for (let i = 0; i < NUM_LINES; i++) for (let k = 0; k < PARTICLES_PER_LINE; k++) {
+    const sp = new THREE.Sprite(particleMat);
+    sp.scale.set(3.6, 3.6, 1); scene1.add(sp);
+    particles.push({ sprite: sp, lineIdx: i, t: (k/PARTICLES_PER_LINE) + Math.random()*0.05 });
+  }
+}
+
+// 共享色 (绿/红) —— 同时作用于磁力线 / 粒子 / 曲面顶点
+const _tmpC = new THREE.Color();
+function makeEffColor(effNorm) {
+  const e = Math.max(0, Math.min(1, effNorm));
+  return _tmpC.setHSL(e * 0.333, 1.0, 0.55);
+}
+function setFieldColor(effNorm) {
+  const c = makeEffColor(effNorm);
+  fieldLineMat.color.copy(c);
+  particleMat.color.copy(c);
+}
+
+let currentSpeed = 0.12;
+const clock = new THREE.Clock();
+
+buildFieldLines(0, 10);
+buildParticles();
+setFieldColor(0);
+
+// ============================================================
+//  场景 2 — 右半：充电效率 η(x₀, d) 3D 曲面
+// ============================================================
+const scene2 = new THREE.Scene();
+scene2.background = new THREE.Color(0x0d1018);
+
+// 让 X-axis = x0, Z-axis = d (在 three.js Y-up 下视觉自然)，Y-axis = 充电效率
+const camera2 = new THREE.PerspectiveCamera(45, 1, 0.1, 800);
+// 相机沿 target 方向后撤 1.25× —— 曲面同比例缩到 80%
+camera2.position.set(56.25, 56, 81.25);
+
+const renderer2 = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer2.setPixelRatio(window.devicePixelRatio);
+renderer2.outputColorSpace = THREE.SRGBColorSpace;
+viewerRightEl.appendChild(renderer2.domElement);
+
+const controls2 = new OrbitControls(camera2, renderer2.domElement);
+controls2.target.set(0, 16, 0);   // 曲面包围盒中心附近
+controls2.enableDamping = true;
+controls2.dampingFactor = 0.08;
+controls2.minDistance = 20;
+controls2.maxDistance = 240;
+
+scene2.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirR1 = new THREE.DirectionalLight(0xffffff, 0.65);
+dirR1.position.set(60, 100, 50); scene2.add(dirR1);
+const dirR2 = new THREE.DirectionalLight(0xaaccff, 0.25);
+dirR2.position.set(-60, 40, -60); scene2.add(dirR2);
+
+// 曲面绘图比例
+const SUR_SX = 1.0;   // x0 (mm) → three.js X
+const SUR_SZ = 1.0;   // d  (mm) → three.js Z
+const SUR_SY = 40.0;  // η (0~0.95) → three.js Y 高度，便于看到起伏
+let   SUR_XC = 20;    // 数据加载后重算
+let   SUR_ZC = 15.5;
+
+let   surfaceMesh = null;
+let   surfaceWire = null;
+let   effGrid     = null;   // [Nx][Nd] efficiency
+let   plotAxesBuilt = false;
+
+function makeTextSprite(text, color = '#cbd3df', size = 36) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = color;
+  g.font = `bold ${size}px sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 64, 32);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const s = new THREE.Sprite(mat);
+  s.scale.set(7, 3.5, 1);
+  return s;
+}
+
+function buildPlotAxes(xs, ds) {
+  if (plotAxesBuilt) return;
+
+  const halfX = (xs[xs.length-1] - SUR_XC) * SUR_SX;
+  const halfZ = (ds[ds.length-1] - SUR_ZC) * SUR_SZ;
+  const maxY  = ETA_PEAK * SUR_SY;
+
+  // 底部参考平面
+  const ground = new THREE.GridHelper(60, 12, 0x3a4252, 0x252a36);
+  ground.position.y = -0.5; scene2.add(ground);
+
+  // 简易坐标轴
+  const ax = new THREE.AxesHelper(22);
+  ax.position.set(-halfX - 1, 0, -halfZ - 1);
+  scene2.add(ax);
+
+  // 标签：放在各自轴最大刻度旁
+  // X 轴 (x₀) 最大刻度 = 40 在 (+halfX, 0, +halfZ)
+  const lblX = makeTextSprite('x₀ (mm)');
+  lblX.position.set(halfX + 7, 0.5, halfZ + 1);
+  scene2.add(lblX);
+  // Z 轴 (d)  最大刻度 = 30 在 (-halfX, 0, +halfZ)
+  const lblZ = makeTextSprite('d (mm)');
+  lblZ.position.set(-halfX - 6, 0.5, halfZ + 2);
+  scene2.add(lblZ);
+  const lblY = makeTextSprite('η');
+  lblY.position.set(-halfX - 4, maxY + 3, -halfZ - 4);
+  scene2.add(lblY);
+
+  // ---- 刻度 ----
+  const tickMat = new THREE.LineBasicMaterial({ color: 0x6e7888 });
+  function tickLabel(text) {
+    const s = makeTextSprite(text, '#aab3c0', 28);
+    s.scale.set(4.2, 1.8, 1);
+    return s;
+  }
+
+  // X (x₀) 刻度 —— 前下边沿 (z = +halfZ)
+  for (const v of [0, 10, 20, 30, 40]) {
+    const xp = (v - SUR_XC) * SUR_SX;
+    scene2.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(xp, 0, halfZ),
+      new THREE.Vector3(xp, -1.5, halfZ),
+    ]), tickMat));
+    const lbl = tickLabel(String(v));
+    lbl.position.set(xp, -3.5, halfZ + 0.4);
+    scene2.add(lbl);
+  }
+
+  // Z (d) 刻度 —— 左下边沿 (x = -halfX)
+  for (const v of [5, 10, 15, 20, 25, 30]) {
+    const zp = (v - SUR_ZC) * SUR_SZ;
+    scene2.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-halfX, 0, zp),
+      new THREE.Vector3(-halfX - 1.5, 0, zp),
+    ]), tickMat));
+    const lbl = tickLabel(String(v));
+    lbl.position.set(-halfX - 4.2, 0, zp);
+    scene2.add(lbl);
+  }
+
+  // Y (η) 刻度 —— 后左立柱 (x = -halfX-1, z = -halfZ-1)
+  for (const v of [20, 40, 60, 80]) {
+    const yp = (v / 100) * SUR_SY;
+    scene2.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-halfX - 1, yp, -halfZ - 1),
+      new THREE.Vector3(-halfX - 2.5, yp, -halfZ - 1),
+    ]), tickMat));
+    const lbl = tickLabel(v + '%');
+    lbl.scale.set(5.2, 1.8, 1);
+    lbl.position.set(-halfX - 6, yp, -halfZ - 1);
+    scene2.add(lbl);
+  }
+
+  plotAxesBuilt = true;
+}
+
+function buildSurface() {
+  if (!simData) return;
+  const xs = simData.x0, ds = simData.d;
+  const Nx = xs.length, Nd = ds.length;
+  SUR_XC = 0.5 * (xs[0] + xs[Nx-1]);
+  SUR_ZC = 0.5 * (ds[0] + ds[Nd-1]);
+
+  effGrid = [];
+  for (let i = 0; i < Nx; i++) {
+    const row = [];
+    for (let j = 0; j < Nd; j++) {
+      const kRel = simData.M[i][j] / M_max;
+      row.push(kRel * kRel * ETA_PEAK);
+    }
+    effGrid.push(row);
+  }
+
+  const positions = [];
+  const colors    = [];
+  const indices   = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < Nx; i++) {
+    for (let j = 0; j < Nd; j++) {
+      const eff = effGrid[i][j];
+      positions.push(
+        (xs[i] - SUR_XC) * SUR_SX,
+        eff * SUR_SY,
+        (ds[j] - SUR_ZC) * SUR_SZ,
+      );
+      // 颜色：与磁力线一致 —— 红 (eff=0) → 绿 (eff=η_peak)
+      c.setHSL((eff / ETA_PEAK) * 0.333, 1.0, 0.55);
+      colors.push(c.r, c.g, c.b);
+    }
+  }
+  for (let i = 0; i < Nx - 1; i++) for (let j = 0; j < Nd - 1; j++) {
+    const a = i * Nd + j;
+    const b = (i + 1) * Nd + j;
+    const c2 = i * Nd + (j + 1);
+    const d2 = (i + 1) * Nd + (j + 1);
+    indices.push(a, b, c2,  b, d2, c2);
+  }
+
+  if (surfaceMesh) { surfaceMesh.geometry.dispose(); scene2.remove(surfaceMesh); }
+  if (surfaceWire) { surfaceWire.geometry.dispose(); scene2.remove(surfaceWire); }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+
+  const mat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    metalness: 0.05,
+    roughness: 0.6,
+  });
+  surfaceMesh = new THREE.Mesh(geom, mat);
+  scene2.add(surfaceMesh);
+
+  // 轻微的栅格线让网格起伏看得更清楚
+  const wireGeom = new THREE.WireframeGeometry(geom);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 });
+  surfaceWire = new THREE.LineSegments(wireGeom, wireMat);
+  scene2.add(surfaceWire);
+
+  buildPlotAxes(xs, ds);
+}
+
+// 指示小三角 (倒置四棱锥)，悬停在曲面上对应的 (x0, d) 点上方
+const indGeom = new THREE.ConeGeometry(1.8, 3.6, 4);
+indGeom.rotateX(Math.PI);   // 顶点朝下
+const indMat = new THREE.MeshBasicMaterial({ color: 0xffd040 });
+const indicator = new THREE.Mesh(indGeom, indMat);
+indicator.visible = false;
+scene2.add(indicator);
+
+// 三角下方一根短竖线接到曲面，让"指向"更清楚
+const stemMat = new THREE.LineBasicMaterial({ color: 0xffd040, transparent: true, opacity: 0.6 });
+let stemGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+const stem = new THREE.Line(stemGeom, stemMat);
+stem.visible = false;
+scene2.add(stem);
+
+function interpEff(x0, d) {
+  if (!effGrid) return 0;
+  const xs = simData.x0, ds = simData.d;
+  const Nx = xs.length, Nd = ds.length;
+  const x = Math.max(xs[0], Math.min(xs[Nx-1], x0));
+  const z = Math.max(ds[0], Math.min(ds[Nd-1], d));
+  let i = Math.floor(x - xs[0]); if (i >= Nx - 1) i = Nx - 2;
+  let j = Math.floor(z - ds[0]); if (j >= Nd - 1) j = Nd - 2;
+  const u = x - xs[i], v = z - ds[j];
+  return effGrid[i][j]*(1-u)*(1-v) + effGrid[i+1][j]*u*(1-v)
+       + effGrid[i][j+1]*(1-u)*v   + effGrid[i+1][j+1]*u*v;
+}
+
+function updateIndicator(x0, d) {
+  if (!effGrid) { indicator.visible = false; stem.visible = false; return; }
+  const eff = interpEff(x0, d);
+  const px = (x0 - SUR_XC) * SUR_SX;
+  const pz = (d  - SUR_ZC) * SUR_SZ;
+  const py = eff * SUR_SY;
+  indicator.position.set(px, py + 5.2, pz);
+  // 三角颜色随效率一致变化
+  indMat.color.copy(makeEffColor(eff / ETA_PEAK));
+  stemMat.color.copy(indMat.color);
+  // 重建短竖线
+  stem.geometry.dispose();
+  stem.geometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(px, py + 0.1, pz),
+    new THREE.Vector3(px, py + 3.6, pz),
+  ]);
+  indicator.visible = true;
+  stem.visible = true;
+}
+
+// ============================================================
+//  数据加载
+// ============================================================
+let simData = null;
+let M_max = 0;
+
+async function loadData() {
+  try {
+    const resp = await fetch('simulation_data.json');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    simData = await resp.json();
+    for (const row of simData.M) for (const v of row) if (v > M_max) M_max = v;
+    statusEl.textContent = `已加载  x0:${simData.x0.length} 点  d:${simData.d.length} 点  M_max=${(M_max*1e9).toFixed(2)} nH`;
+    buildSurface();
+    update();
+  } catch (e) {
+    statusEl.textContent = '加载 simulation_data.json 失败: ' + e.message + '  (请用本地 HTTP 服务器打开)';
+    statusEl.style.color = '#ff8080';
+  }
+}
+loadData();
+
+function interpM(x0, d) {
+  if (!simData) return null;
+  const xs = simData.x0, ds = simData.d, M = simData.M;
+  const x = Math.max(xs[0], Math.min(xs[xs.length-1], x0));
+  const z = Math.max(ds[0], Math.min(ds[ds.length-1], d));
+  let i = Math.floor(x - xs[0]); if (i >= xs.length - 1) i = xs.length - 2;
+  let j = Math.floor(z - ds[0]); if (j >= ds.length - 1) j = ds.length - 2;
+  const u = x - xs[i], v = z - ds[j];
+  return M[i][j]*(1-u)*(1-v) + M[i+1][j]*u*(1-v)
+       + M[i][j+1]*(1-u)*v   + M[i+1][j+1]*u*v;
+}
+
+// ============================================================
+//  滑块 -> 双场景同步
+// ============================================================
+function update() {
+  const x0 = parseFloat(x0Slider.value);
+  const d  = parseFloat(dSlider.value);
+  x0ValEl.textContent = x0.toFixed(1);
+  dValEl.textContent  = d.toFixed(1);
+
+  // 左视图 RX 位置
+  rx.position.set(x0, d, 0);
+  // 中心连线
+  link.geometry.dispose();
+  link.geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(x0,d,0)]);
+  link.computeLineDistances();
+  // 重建磁力线
+  buildFieldLines(x0, d);
+
+  // 数据查询 + 数值显示
+  if (simData) {
+    const M = interpM(x0, d);
+    const kRel = M / M_max;
+    const eff = kRel * kRel * ETA_PEAK;
+    mValEl.textContent = (M * 1e9).toFixed(2) + ' nH';
+    kValEl.textContent = kRel.toFixed(3);
+    effEl.textContent  = (eff * 100).toFixed(2) + ' %';
+    effBar.style.width = (eff * 100).toFixed(1) + '%';
+
+    const norm = Math.max(0, Math.min(1, eff / ETA_PEAK));
+    setFieldColor(norm);
+    currentSpeed = 0.06 + 0.55 * norm;
+
+    // 右视图指示三角
+    updateIndicator(x0, d);
+  } else {
+    currentSpeed = 0.12;
+  }
+}
+x0Slider.addEventListener('input', update);
+dSlider.addEventListener('input',  update);
+update();
+
+// ============================================================
+//  渲染循环 + 自适应 (两个独立画布)
+// ============================================================
+function resize() {
+  const w1 = viewerLeftEl.clientWidth,  h1 = viewerLeftEl.clientHeight;
+  renderer1.setSize(w1, h1);
+  camera1.aspect = w1 / h1; camera1.updateProjectionMatrix();
+
+  const w2 = viewerRightEl.clientWidth, h2 = viewerRightEl.clientHeight;
+  renderer2.setSize(w2, h2);
+  camera2.aspect = w2 / h2; camera2.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  controls1.update();
+  controls2.update();
+
+  // 粒子沿磁力线推进
+  const dt = Math.min(clock.getDelta(), 0.05);
+  for (const p of particles) {
+    p.t += currentSpeed * dt;
+    if (p.t >= 1) p.t -= 1;
+    p.sprite.position.copy(fieldLines[p.lineIdx].curve.getPoint(p.t));
+  }
+
+  renderer1.render(scene1, camera1);
+  renderer2.render(scene2, camera2);
+}
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>金属壳影响仿真 (三线圈耦合)</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; background: #0e1116; color: #e6e6e6; }
+  #app { display: flex; height: 100vh; width: 100vw; }
+
+  #viewer { flex: 1; display: flex; min-width: 0; background: #0b0d12; }
+  #viewer-left, #viewer-right { flex: 1; position: relative; min-width: 0; min-height: 0; }
+  #viewer-right { border-left: 1px solid #2a2f3a; background: #0d1018; }
+  #viewer canvas { display: block; width: 100% !important; height: 100% !important; }
+
+  #legend { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+  #legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  #legend .sq  { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: middle; }
+  #status { position: absolute; bottom: 12px; left: 12px; font-size: 12px; color: #9aa3b2; background: rgba(20,22,28,0.65); padding: 4px 10px; border-radius: 4px; }
+  #plot-title { position: absolute; top: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 6px 12px; border-radius: 6px; font-size: 13px; color: #cbd3df; }
+  #plot-hint  { position: absolute; bottom: 12px; left: 12px; background: rgba(20,22,28,0.65); padding: 4px 10px; border-radius: 4px; font-size: 12px; color: #8892a0; }
+
+  #panel { width: 300px; padding: 20px; background: #161a22; border-left: 1px solid #2a2f3a; overflow-y: auto; flex-shrink: 0; }
+  #panel h1 { font-size: 17px; margin: 0 0 16px; color: #fff; font-weight: 600; }
+  .control { margin-bottom: 18px; }
+  .control .row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .control label { font-size: 14px; color: #b8c0cc; }
+  .control .value { font-family: "SF Mono", Menlo, monospace; font-size: 15px; color: #6ec1ff; }
+  .control .hint  { margin-top: 4px; font-size: 11px; color: #8892a0; font-style: italic; }
+  .control input[type=range] { width: 100%; -webkit-appearance: none; height: 4px; background: #2a2f3a; border-radius: 2px; outline: none; }
+  .control input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #6ec1ff; cursor: pointer; border: 2px solid #161a22; }
+  .control input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #6ec1ff; cursor: pointer; border: 2px solid #161a22; }
+  .result { margin-top: 24px; padding: 16px; background: #11141b; border-radius: 8px; border: 1px solid #2a2f3a; }
+  .result h2 { margin: 0 0 12px; font-size: 14px; color: #b8c0cc; font-weight: 500; }
+  .result .metric { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; }
+  .result .metric .k { color: #8892a0; }
+  .result .metric .v { font-family: "SF Mono", Menlo, monospace; color: #fff; }
+  .result .metric .v.skin { color: #ffd040; }
+  .result .eff { font-size: 28px; color: #6ec1ff; font-weight: 600; text-align: center; margin: 14px 0 4px; font-family: "SF Mono", Menlo, monospace; }
+  .result .eff-bar { height: 6px; background: #2a2f3a; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .result .eff-bar > div { height: 100%; background: linear-gradient(90deg,#3b82f6,#22d3ee); width: 0%; transition: width 0.12s ease-out; }
+  .note { margin-top: 18px; font-size: 11px; color: #6b7280; line-height: 1.6; }
+  .note code { color: #b8c0cc; }
+  #goto-coil { position: fixed; right: 16px; bottom: 16px; z-index: 50;
+    background: #2a3142; color: #e6e6e6; padding: 10px 16px; border-radius: 6px;
+    text-decoration: none; font-size: 13px; border: 1px solid #3a4252;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35); transition: background 0.15s; }
+  #goto-coil:hover { background: #3a4252; }
+</style>
+</head>
+<body>
+<a id="goto-coil" href="index.html">← 偏心仿真</a>
+<div id="app">
+  <div id="viewer">
+    <div id="viewer-left">
+      <div id="legend">
+        <div><span class="dot" style="background:#ee3333"></span>发射线圈 (TX)</div>
+        <div><span class="dot" style="background:#3b82f6"></span>接收线圈 (RX)</div>
+        <div><span class="sq"  style="background:#8a9fbf;border:1px solid #aac"></span>金属手机壳 (半透)</div>
+      </div>
+      <div id="status">加载中…</div>
+    </div>
+    <div id="viewer-right">
+      <div id="plot-title">充电效率 η(σ, d) 曲面 · σ 轴对数</div>
+      <div id="plot-hint">鼠标拖动旋转 · 滚轮缩放</div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>金属手机壳影响仿真</h1>
+
+    <div class="control">
+      <div class="row"><label>金属电导率 σ</label><span class="value"><span id="sigma_val">5.96e+7</span> S/m</span></div>
+      <input type="range" id="sigma_slider" min="4" max="8" step="0.005" value="7.7752" />
+      <div class="hint" id="sigma_hint">≈ 铜 (Cu)</div>
+    </div>
+
+    <div class="control">
+      <div class="row"><label>轴向距离 d</label><span class="value"><span id="d_val">10.0</span> mm</span></div>
+      <input type="range" id="d_slider" min="1" max="30" step="0.1" value="10" />
+    </div>
+
+    <div class="result">
+      <h2>实时计算</h2>
+      <div class="metric"><span class="k">趋肤深度 δ</span><span class="v skin" id="delta_val">—</span></div>
+      <div class="metric"><span class="k">互感 M<sub>eff</sub></span><span class="v" id="m_val">—</span></div>
+      <div class="metric"><span class="k">耦合系数 (相对)</span><span class="v" id="k_val">—</span></div>
+      <div class="eff" id="eff_val">— %</div>
+      <div class="eff-bar"><div id="eff_bar"></div></div>
+      <div style="text-align:center; font-size:12px; color:#8892a0; margin-top:6px;">充电效率</div>
+    </div>
+
+    <div class="note">
+      工作频率 f = 200 kHz · 金属板厚度 t = 0.5 mm<br/>
+      趋肤深度 δ = √(2 / (ω·μ₀·σ))<br/>
+      <code>M_eff = M_12 − jω·M_1m·M_2m / (R_m + jω·L_m)</code><br/>
+      数据来源: <code>simulation_data_metal.json</code>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- DOM ----------
+const viewerLeftEl  = document.getElementById('viewer-left');
+const viewerRightEl = document.getElementById('viewer-right');
+const sigmaSlider = document.getElementById('sigma_slider');
+const dSlider     = document.getElementById('d_slider');
+const sigmaValEl  = document.getElementById('sigma_val');
+const sigmaHintEl = document.getElementById('sigma_hint');
+const dValEl      = document.getElementById('d_val');
+const deltaValEl  = document.getElementById('delta_val');
+const mValEl      = document.getElementById('m_val');
+const kValEl      = document.getElementById('k_val');
+const effEl       = document.getElementById('eff_val');
+const effBar      = document.getElementById('eff_bar');
+const statusEl    = document.getElementById('status');
+
+// ---------- 物理常量 ----------
+const R_TX = 50, R_RX = 50, TUBE = 1.6;
+const ETA_PEAK = 0.95;
+const F_OP = 200e3;
+const OMEGA = 2 * Math.PI * F_OP;
+const MU0 = 4 * Math.PI * 1e-7;
+const T_PLATE_MM = 0.5;
+const PLATE_W = 90;   // 金属板可视尺寸 (mm)
+const PLATE_D = 90;
+
+// 常见日常金属 / 复合材料 σ (S/m, 20℃)
+const METALS = [
+  { name: '碳纤维', short: 'CF',    sigma: 5.00e4 },
+  { name: '钛合金', short: 'TiA',   sigma: 5.80e5 },
+  { name: '不锈钢', short: 'SS',    sigma: 1.45e6 },
+  { name: '铅',     short: 'Pb',    sigma: 4.56e6 },
+  { name: '铁',     short: 'Fe',    sigma: 1.00e7 },
+  { name: '黄铜',   short: 'Brass', sigma: 1.59e7 },
+  { name: '铝合金', short: 'AlA',   sigma: 2.50e7 },
+  { name: '铝',     short: 'Al',    sigma: 3.50e7 },
+  { name: '金',     short: 'Au',    sigma: 4.10e7 },
+  { name: '铜',     short: 'Cu',    sigma: 5.96e7 },
+  { name: '银',     short: 'Ag',    sigma: 6.30e7 },
+];
+
+// ============================================================
+//  场景 1 — 左半：偏心(=0)圆环 + 金属手机壳 + 趋肤深度刻度
+// ============================================================
+const scene1 = new THREE.Scene();
+scene1.background = new THREE.Color(0x0b0d12);
+
+const camera1 = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+camera1.position.set(135, 95, 175);
+
+const renderer1 = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer1.setPixelRatio(window.devicePixelRatio);
+renderer1.outputColorSpace = THREE.SRGBColorSpace;
+viewerLeftEl.appendChild(renderer1.domElement);
+
+const controls1 = new OrbitControls(camera1, renderer1.domElement);
+controls1.target.set(5, 7, 0);
+controls1.enableDamping = true;
+controls1.dampingFactor = 0.08;
+controls1.minDistance = 40;
+controls1.maxDistance = 500;
+
+scene1.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirL1 = new THREE.DirectionalLight(0xffffff, 0.75); dirL1.position.set(120, 200, 120); scene1.add(dirL1);
+const dirL2 = new THREE.DirectionalLight(0x88aaff, 0.25); dirL2.position.set(-100, -50, -120); scene1.add(dirL2);
+
+const grid1 = new THREE.GridHelper(240, 24, 0x2a2f3a, 0x1a1d24);
+grid1.position.y = -2; scene1.add(grid1);
+scene1.add(new THREE.AxesHelper(70));
+
+function makeCoil(radius, color) {
+  const geom = new THREE.TorusGeometry(radius, TUBE, 20, 128);
+  const mat = new THREE.MeshStandardMaterial({ color, metalness: 0.7, roughness: 0.25, emissive: color, emissiveIntensity: 0.15 });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.rotation.x = Math.PI / 2;
+  return mesh;
+}
+const tx = makeCoil(R_TX, 0xee3333); scene1.add(tx);
+const rx = makeCoil(R_RX, 0x3b82f6); scene1.add(rx);
+
+// 金属手机壳板 —— 半透明，色调随 η 变化 (与磁力线粒子统一)
+const plateGeom = new THREE.BoxGeometry(PLATE_W, T_PLATE_MM, PLATE_D);
+const plateMat  = new THREE.MeshStandardMaterial({
+  color: 0x8a9fbf, transparent: true, opacity: 0.45,
+  metalness: 0.85, roughness: 0.35,
+  emissive: 0x223344, emissiveIntensity: 0.25,
+  side: THREE.DoubleSide,
+});
+const plate = new THREE.Mesh(plateGeom, plateMat);
+scene1.add(plate);
+
+// 文字 sprite 工具 (右侧曲面图、指示三角等都会用到)
+function makeTextSprite(text, color = '#cbd3df', size = 32) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = color;
+  g.font = `bold ${size}px sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const s = new THREE.Sprite(mat);
+  s.scale.set(14, 3.5, 1);
+  return s;
+}
+
+// 磁力线 + 流动粒子 (同 index.html)
+const NUM_LINES = 20, PARTICLES_PER_LINE = 4, SAMPLES_PER_CURVE = 60;
+const fieldLineMat = new THREE.LineBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.55 });
+function makeGlowTexture() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32,32,0, 32,32,32);
+  grd.addColorStop(0,'rgba(255,255,255,1)'); grd.addColorStop(0.3,'rgba(255,255,255,0.55)'); grd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const glowTex = makeGlowTexture();
+const particleMat = new THREE.SpriteMaterial({ map: glowTex, color: 0x00ff66, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+const fieldLines = [], particles = [];
+function buildFieldLines(x0, d) {
+  for (const fl of fieldLines) { fl.line.geometry.dispose(); scene1.remove(fl.line); }
+  fieldLines.length = 0;
+  for (let i = 0; i < NUM_LINES; i++) {
+    const theta = (i / NUM_LINES) * Math.PI * 2;
+    const cT = Math.cos(theta), sT = Math.sin(theta);
+    const s = new THREE.Vector3(R_TX*cT, 0, R_TX*sT);
+    const e = new THREE.Vector3(x0 + R_RX*cT, d, R_RX*sT);
+    const o = new THREE.Vector3(cT, 0, sT);
+    const bulge = 18 + 0.45*d;
+    const cp1 = s.clone().add(new THREE.Vector3(0,  d*0.40, 0)).addScaledVector(o, bulge);
+    const cp2 = e.clone().add(new THREE.Vector3(0, -d*0.40, 0)).addScaledVector(o, bulge);
+    const curve = new THREE.CubicBezierCurve3(s, cp1, cp2, e);
+    const geom  = new THREE.BufferGeometry().setFromPoints(curve.getPoints(SAMPLES_PER_CURVE));
+    const line  = new THREE.Line(geom, fieldLineMat);
+    scene1.add(line);
+    fieldLines.push({ curve, line });
+  }
+}
+function buildParticles() {
+  for (let i = 0; i < NUM_LINES; i++) for (let k = 0; k < PARTICLES_PER_LINE; k++) {
+    const sp = new THREE.Sprite(particleMat); sp.scale.set(3.6,3.6,1); scene1.add(sp);
+    particles.push({ sprite: sp, lineIdx: i, t: (k/PARTICLES_PER_LINE) + Math.random()*0.05 });
+  }
+}
+const _tmpC = new THREE.Color();
+function makeEffColor(effNorm) {
+  return _tmpC.setHSL(Math.max(0,Math.min(1,effNorm)) * 0.333, 1.0, 0.55);
+}
+function setFieldColor(effNorm) {
+  const c = makeEffColor(effNorm);
+  fieldLineMat.color.copy(c);
+  particleMat.color.copy(c);
+}
+
+let currentSpeed = 0.12;
+const clock = new THREE.Clock();
+
+buildFieldLines(0, 10);
+buildParticles();
+setFieldColor(0);
+
+// ============================================================
+//  场景 2 — 右半：充电效率 η(σ, d) 曲面，X 轴 = log10(σ)
+// ============================================================
+const scene2 = new THREE.Scene();
+scene2.background = new THREE.Color(0x0d1018);
+
+const camera2 = new THREE.PerspectiveCamera(45, 1, 0.1, 800);
+camera2.position.set(56, 60, 88);
+
+const renderer2 = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer2.setPixelRatio(window.devicePixelRatio);
+renderer2.outputColorSpace = THREE.SRGBColorSpace;
+viewerRightEl.appendChild(renderer2.domElement);
+
+const controls2 = new OrbitControls(camera2, renderer2.domElement);
+controls2.target.set(0, 16, 0);
+controls2.enableDamping = true; controls2.dampingFactor = 0.08;
+controls2.minDistance = 20; controls2.maxDistance = 260;
+
+scene2.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirR1 = new THREE.DirectionalLight(0xffffff, 0.7); dirR1.position.set(70, 110, 60); scene2.add(dirR1);
+const dirR2 = new THREE.DirectionalLight(0xaaccff, 0.25); dirR2.position.set(-60, 40, -70); scene2.add(dirR2);
+
+// σ 轴范围：log10(σ) ∈ [4, 8]，映射到 X ∈ [-22.5, 22.5]
+// 下限扩到 1e4 是为了把碳纤维这类低 σ 材料也纳入绘制范围
+const LOG_SIGMA_MIN = 4, LOG_SIGMA_MAX = 8;
+const SUR_HALFX = 22.5;
+function sigmaToX(sigma) {
+  const t = (Math.log10(sigma) - LOG_SIGMA_MIN) / (LOG_SIGMA_MAX - LOG_SIGMA_MIN);
+  return (t - 0.5) * 2 * SUR_HALFX;
+}
+const SUR_SZ = 1.0;     // d → Z (mm)
+const SUR_SY = 40.0;    // η → Y 高度
+let   SUR_ZC = 15.5;
+
+let surfaceMesh = null, surfaceWire = null, effGrid = null;
+let plotBuilt = false;
+
+function buildPlotAxes(ds) {
+  if (plotBuilt) return;
+
+  const halfZ   = (ds[ds.length-1] - SUR_ZC) * SUR_SZ;
+  const halfX   = SUR_HALFX;
+  const zBack   = -halfZ - 1.5;
+  const zFront  =  halfZ + 0.5;
+
+  const ground = new THREE.GridHelper(60, 12, 0x3a4252, 0x252a36);
+  ground.position.y = -0.5; scene2.add(ground);
+
+  // 后左立柱坐标轴
+  const ax = new THREE.AxesHelper(20);
+  ax.position.set(-halfX - 1, 0, -halfZ - 1);
+  scene2.add(ax);
+
+  // 轴标签：放在各自轴最大刻度旁
+  // σ 轴最大刻度 (10⁸) 在前下沿右端 (+halfX, 0, zFront)
+  const lblX = makeTextSprite('σ (S/m)', '#cbd3df', 30);
+  lblX.position.set(halfX + 7, 0.5, zFront + 0.5);
+  scene2.add(lblX);
+  // d 轴最大刻度 (30 mm) 在左下沿前端 (-halfX, 0, +halfZ)
+  const lblZ = makeTextSprite('d (mm)', '#cbd3df', 30);
+  lblZ.position.set(-halfX - 6, 0.5, halfZ + 2);
+  scene2.add(lblZ);
+  const lblY = makeTextSprite('η', '#cbd3df', 32);
+  lblY.position.set(-halfX - 4, ETA_PEAK*SUR_SY + 3, -halfZ - 4);
+  scene2.add(lblY);
+
+  // ---- 后边：沿 σ 轴标注常见金属 / 复合材料 ----
+  // 11 种材料在 log 轴上较密，使用上下两行交错排布
+  const metalTickMat = new THREE.LineBasicMaterial({ color: 0x8892a0 });
+  for (let mi = 0; mi < METALS.length; mi++) {
+    const m = METALS[mi];
+    const x = sigmaToX(m.sigma);
+    const odd = (mi % 2 === 1);
+    const yShort = odd ? 10.0 : 4.5;
+    const yZh    = odd ? 7.0  : 1.5;
+    scene2.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x, 0,   zBack),
+        new THREE.Vector3(x, 1.6, zBack),
+      ]), metalTickMat));
+    const lblShort = makeTextSprite(m.short, '#ffd9a0', 30);
+    lblShort.scale.set(6.5, 2.7, 1);
+    lblShort.position.set(x, yShort, zBack - 2);
+    scene2.add(lblShort);
+    const lblZh = makeTextSprite(m.name, '#cbd3df', 28);
+    lblZh.scale.set(6, 2.4, 1);
+    lblZh.position.set(x, yZh, zBack - 4);
+    scene2.add(lblZh);
+  }
+
+  // ---- 前边：σ 对数刻度 (10⁴ … 10⁸)，三维曲面图标准的轴刻度 ----
+  const tickMat = new THREE.LineBasicMaterial({ color: 0x6e7888 });
+  const SUP = ['⁴','⁵','⁶','⁷','⁸'];
+  for (let p = 4; p <= 8; p++) {
+    const x = sigmaToX(Math.pow(10, p));
+    scene2.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x, 0,    zFront),
+        new THREE.Vector3(x, -1.6, zFront),
+      ]), tickMat));
+    const lbl = makeTextSprite('10' + SUP[p-4], '#aab3c0', 26);
+    lbl.scale.set(5, 2.2, 1);
+    lbl.position.set(x, -3.5, zFront + 0.4);
+    scene2.add(lbl);
+  }
+  // 半十进制小刻度（无文字）
+  for (let p = 4; p < 8; p++) {
+    const x = sigmaToX(Math.pow(10, p + 0.5));
+    scene2.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x, 0,    zFront),
+        new THREE.Vector3(x, -0.9, zFront),
+      ]), tickMat));
+  }
+
+  // ---- 左边：d 轴刻度 ----
+  for (const v of [5, 10, 15, 20, 25, 30]) {
+    const zp = (v - SUR_ZC) * SUR_SZ;
+    scene2.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-halfX,        0, zp),
+        new THREE.Vector3(-halfX - 1.5,  0, zp),
+      ]), tickMat));
+    const lbl = makeTextSprite(String(v), '#aab3c0', 26);
+    lbl.scale.set(4.2, 1.8, 1);
+    lbl.position.set(-halfX - 4.2, 0, zp);
+    scene2.add(lbl);
+  }
+
+  // ---- 后左立柱：η 轴刻度 (与偏心页保持一致) ----
+  for (const v of [20, 40, 60, 80]) {
+    const yp = (v / 100) * SUR_SY;
+    scene2.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-halfX - 1,   yp, -halfZ - 1),
+        new THREE.Vector3(-halfX - 2.5, yp, -halfZ - 1),
+      ]), tickMat));
+    const lbl = makeTextSprite(v + '%', '#aab3c0', 26);
+    lbl.scale.set(5.2, 1.8, 1);
+    lbl.position.set(-halfX - 6, yp, -halfZ - 1);
+    scene2.add(lbl);
+  }
+
+  plotBuilt = true;
+}
+
+function buildSurface() {
+  if (!simData) return;
+  const sigmas = simData.sigma, ds = simData.d;
+  const Ns = sigmas.length, Nd = ds.length;
+  SUR_ZC = 0.5 * (ds[0] + ds[Nd-1]);
+
+  effGrid = [];
+  for (let i = 0; i < Ns; i++) {
+    const row = [];
+    for (let j = 0; j < Nd; j++) {
+      const kRel = simData.M[i][j] / M_max;
+      row.push(kRel * kRel * ETA_PEAK);
+    }
+    effGrid.push(row);
+  }
+
+  const positions = [], colors = [], indices = [];
+  const cc = new THREE.Color();
+  for (let i = 0; i < Ns; i++) {
+    const xPos = sigmaToX(sigmas[i]);
+    for (let j = 0; j < Nd; j++) {
+      const eff = effGrid[i][j];
+      positions.push(xPos, eff * SUR_SY, (ds[j] - SUR_ZC) * SUR_SZ);
+      cc.setHSL((eff/ETA_PEAK) * 0.333, 1.0, 0.55);
+      colors.push(cc.r, cc.g, cc.b);
+    }
+  }
+  for (let i = 0; i < Ns - 1; i++) for (let j = 0; j < Nd - 1; j++) {
+    const a = i*Nd+j, b = (i+1)*Nd+j, c2 = i*Nd+(j+1), d2 = (i+1)*Nd+(j+1);
+    indices.push(a,b,c2,  b,d2,c2);
+  }
+
+  if (surfaceMesh) { surfaceMesh.geometry.dispose(); scene2.remove(surfaceMesh); }
+  if (surfaceWire) { surfaceWire.geometry.dispose(); scene2.remove(surfaceWire); }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+  geom.setIndex(indices); geom.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, metalness: 0.05, roughness: 0.6 });
+  surfaceMesh = new THREE.Mesh(geom, mat); scene2.add(surfaceMesh);
+
+  const wireGeom = new THREE.WireframeGeometry(geom);
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 });
+  surfaceWire = new THREE.LineSegments(wireGeom, wireMat); scene2.add(surfaceWire);
+
+  buildPlotAxes(ds);
+}
+
+// 趋肤深度参考面：法线沿 three.js Z (= 数学 d 轴)，半透明绿
+// PlaneGeometry 默认顶点在 XY 平面，正合"垂直于 d 轴"的要求
+const SKIN_PLANE_W = 2 * SUR_HALFX + 8;
+const SKIN_PLANE_H = ETA_PEAK * SUR_SY + 6;
+const skinPlaneGeom = new THREE.PlaneGeometry(SKIN_PLANE_W, SKIN_PLANE_H);
+const skinPlaneMat  = new THREE.MeshBasicMaterial({
+  color: 0x55ff80,
+  transparent: true,
+  opacity: 0.22,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const skinPlane = new THREE.Mesh(skinPlaneGeom, skinPlaneMat);
+const skinPlaneEdges = new THREE.LineSegments(
+  new THREE.EdgesGeometry(skinPlaneGeom),
+  new THREE.LineBasicMaterial({ color: 0x9affc0, transparent: true, opacity: 0.75 })
+);
+const skinPlaneGroup = new THREE.Group();
+// 抬高到曲面 Y 中段，让平面横跨整个高度
+skinPlane.position.y      = SKIN_PLANE_H / 2 - 3;
+skinPlaneEdges.position.y = skinPlane.position.y;
+skinPlaneGroup.add(skinPlane);
+skinPlaneGroup.add(skinPlaneEdges);
+skinPlaneGroup.visible = false;   // 等数据加载后再显示，省得初始 Z 错位
+scene2.add(skinPlaneGroup);
+
+let skinPlaneLabel = null;
+function updateSkinPlane(delta_mm) {
+  skinPlaneGroup.position.z = (delta_mm - SUR_ZC) * SUR_SZ;
+  skinPlaneGroup.visible = true;
+  if (skinPlaneLabel) {
+    if (skinPlaneLabel.material.map) skinPlaneLabel.material.map.dispose();
+    if (skinPlaneLabel.material) skinPlaneLabel.material.dispose();
+    scene2.remove(skinPlaneLabel);
+  }
+  skinPlaneLabel = makeTextSprite(`δ = ${delta_mm.toFixed(2)} mm`, '#bcffce', 30);
+  skinPlaneLabel.scale.set(11, 2.8, 1);
+  skinPlaneLabel.position.set(SUR_HALFX + 7, SKIN_PLANE_H * 0.55, (delta_mm - SUR_ZC) * SUR_SZ);
+  scene2.add(skinPlaneLabel);
+}
+
+// 指示三角 (与左面板的 σ/d 同步)
+const indGeom = new THREE.ConeGeometry(1.8, 3.6, 4); indGeom.rotateX(Math.PI);
+const indMat = new THREE.MeshBasicMaterial({ color: 0xffd040 });
+const indicator = new THREE.Mesh(indGeom, indMat);
+indicator.visible = false; scene2.add(indicator);
+const stemMat = new THREE.LineBasicMaterial({ color: 0xffd040, transparent: true, opacity: 0.6 });
+let stem = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), stemMat);
+stem.visible = false; scene2.add(stem);
+
+// (sigma, d) 双线性插值，σ 轴在 log 空间均匀
+function interpEff(sigma, d) {
+  if (!effGrid) return 0;
+  const sigmas = simData.sigma, ds = simData.d;
+  const Ns = sigmas.length, Nd = ds.length;
+  const logS0 = Math.log10(sigmas[0]), logSN = Math.log10(sigmas[Ns-1]);
+  const tS = (Math.log10(Math.max(sigmas[0], Math.min(sigmas[Ns-1], sigma))) - logS0) / (logSN - logS0) * (Ns - 1);
+  let i = Math.floor(tS); if (i >= Ns - 1) i = Ns - 2;
+  const u = tS - i;
+  const x = Math.max(ds[0], Math.min(ds[Nd-1], d));
+  let j = Math.floor(x - ds[0]); if (j >= Nd - 1) j = Nd - 2;
+  const v = x - ds[j];
+  return effGrid[i][j]*(1-u)*(1-v) + effGrid[i+1][j]*u*(1-v)
+       + effGrid[i][j+1]*(1-u)*v   + effGrid[i+1][j+1]*u*v;
+}
+
+function updateIndicator(sigma, d) {
+  if (!effGrid) { indicator.visible = false; stem.visible = false; return; }
+  const eff = interpEff(sigma, d);
+  const px = sigmaToX(sigma);
+  const pz = (d - SUR_ZC) * SUR_SZ;
+  const py = eff * SUR_SY;
+  indicator.position.set(px, py + 5.2, pz);
+  indMat.color.copy(makeEffColor(eff / ETA_PEAK));
+  stemMat.color.copy(indMat.color);
+  stem.geometry.dispose();
+  stem.geometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(px, py + 0.1, pz),
+    new THREE.Vector3(px, py + 3.6, pz),
+  ]);
+  indicator.visible = true; stem.visible = true;
+}
+
+// ============================================================
+//  数据
+// ============================================================
+let simData = null;
+let M_max = 0;
+
+async function loadData() {
+  try {
+    const resp = await fetch('simulation_data_metal.json');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    simData = await resp.json();
+    for (const row of simData.M) for (const v of row) if (v > M_max) M_max = v;
+    statusEl.textContent = `已加载  σ:${simData.sigma.length} 点  d:${simData.d.length} 点  M_max=${(M_max*1e9).toFixed(1)} nH`;
+    buildSurface();
+    update();
+  } catch (e) {
+    statusEl.textContent = '加载 simulation_data_metal.json 失败: ' + e.message;
+    statusEl.style.color = '#ff8080';
+  }
+}
+loadData();
+
+function interpM(sigma, d) {
+  if (!simData) return null;
+  const sigmas = simData.sigma, ds = simData.d, M = simData.M;
+  const Ns = sigmas.length, Nd = ds.length;
+  const logS0 = Math.log10(sigmas[0]), logSN = Math.log10(sigmas[Ns-1]);
+  const tS = (Math.log10(Math.max(sigmas[0], Math.min(sigmas[Ns-1], sigma))) - logS0) / (logSN - logS0) * (Ns - 1);
+  let i = Math.floor(tS); if (i >= Ns - 1) i = Ns - 2;
+  const u = tS - i;
+  const x = Math.max(ds[0], Math.min(ds[Nd-1], d));
+  let j = Math.floor(x - ds[0]); if (j >= Nd - 1) j = Nd - 2;
+  const v = x - ds[j];
+  return M[i][j]*(1-u)*(1-v) + M[i+1][j]*u*(1-v) + M[i][j+1]*(1-u)*v + M[i+1][j+1]*u*v;
+}
+
+function nearestMetal(sigma) {
+  let best = null, bestD = Infinity;
+  for (const m of METALS) {
+    const dd = Math.abs(Math.log10(sigma / m.sigma));
+    if (dd < bestD) { bestD = dd; best = m; }
+  }
+  return bestD < 0.06 ? best : null;   // 约 ±15% 之内显示金属名
+}
+
+function skinDepth(sigma) {
+  return Math.sqrt(2 / (OMEGA * MU0 * sigma));   // m
+}
+
+// ============================================================
+//  滑块更新
+// ============================================================
+function update() {
+  const logS = parseFloat(sigmaSlider.value);
+  const sigma = Math.pow(10, logS);
+  const d = parseFloat(dSlider.value);
+
+  sigmaValEl.textContent = sigma.toExponential(2);
+  dValEl.textContent     = d.toFixed(1);
+  const nm = nearestMetal(sigma);
+  sigmaHintEl.textContent = nm ? `≈ ${nm.name} (${nm.short})` : '——';
+
+  // 趋肤深度 (mm)
+  const delta_mm = skinDepth(sigma) * 1000;
+  deltaValEl.textContent = delta_mm.toFixed(3) + ' mm';
+
+  // 左视图：RX、金属板、磁力线 (不在这里画 δ 刻度)
+  rx.position.set(0, d, 0);
+  plate.position.set(0, d / 2, 0);
+  buildFieldLines(0, d);
+
+  // 右视图：把 δ 显示为垂直于 d 轴的半透明绿平面
+  updateSkinPlane(delta_mm);
+
+  if (simData) {
+    const M = interpM(sigma, d);
+    const kRel = M / M_max;
+    const eff  = kRel * kRel * ETA_PEAK;
+    mValEl.textContent = (M * 1e9).toFixed(2) + ' nH';
+    kValEl.textContent = kRel.toFixed(3);
+    effEl.textContent  = (eff * 100).toFixed(2) + ' %';
+    effBar.style.width = (eff * 100).toFixed(1) + '%';
+
+    const norm = Math.max(0, Math.min(1, eff / ETA_PEAK));
+    setFieldColor(norm);
+    // 金属板色调跟随效率 (与磁力线粒子同色)，但保留金属反光感
+    const c = makeEffColor(norm);
+    plateMat.color.copy(c);
+    plateMat.emissive.copy(c).multiplyScalar(0.35);
+    currentSpeed = 0.06 + 0.55 * norm;
+
+    updateIndicator(sigma, d);
+  } else {
+    currentSpeed = 0.12;
+  }
+}
+sigmaSlider.addEventListener('input', update);
+dSlider.addEventListener('input', update);
+update();
+
+// ============================================================
+//  渲染循环
+// ============================================================
+function resize() {
+  const w1 = viewerLeftEl.clientWidth,  h1 = viewerLeftEl.clientHeight;
+  renderer1.setSize(w1, h1);
+  camera1.aspect = w1 / h1; camera1.updateProjectionMatrix();
+  const w2 = viewerRightEl.clientWidth, h2 = viewerRightEl.clientHeight;
+  renderer2.setSize(w2, h2);
+  camera2.aspect = w2 / h2; camera2.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls1.update(); controls2.update();
+  const dt = Math.min(clock.getDelta(), 0.05);
+  for (const p of particles) {
+    p.t += currentSpeed * dt;
+    if (p.t >= 1) p.t -= 1;
+    p.sprite.position.copy(fieldLines[p.lineIdx].curve.getPoint(p.t));
+  }
+  renderer1.render(scene1, camera1);
+  renderer2.render(scene2, camera2);
+}
+animate();
+</script>
+</body>
+</html>
